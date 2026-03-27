@@ -1,4 +1,4 @@
-use crate::app::{App, Mode};
+use crate::app::App;
 use crate::parser::{LineType, SourceLine};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -25,18 +25,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let code_area = chunks[0];
     let status_area = chunks[1];
 
-    match app.mode {
-        Mode::Selecting => {
-            app.update_scroll_for_select(code_area.height as usize);
-            render_select_view(frame, app, code_area);
-            render_select_status_bar(frame, app, status_area);
-        }
-        Mode::Typing => {
-            app.update_scroll(code_area.height as usize);
-            render_code_view(frame, app, code_area);
-            render_status_bar(frame, app, status_area);
-        }
-    }
+    app.update_scroll(code_area.height as usize);
+    render_code_view(frame, app, code_area);
+    render_status_bar(frame, app, status_area);
 }
 
 fn render_code_view(frame: &mut Frame, app: &App, area: Rect) {
@@ -171,73 +162,6 @@ fn render_typeable_content<'a>(
             Style::default().add_modifier(Modifier::REVERSED),
         ));
     }
-}
-
-fn render_select_view(frame: &mut Frame, app: &App, area: Rect) {
-    let visible_height = area.height as usize;
-    let start = app.scroll_offset;
-    let end = (start + visible_height).min(app.source_lines.len());
-
-    let mut lines: Vec<Line> = Vec::new();
-
-    for line_idx in start..end {
-        let source_line = &app.source_lines[line_idx];
-        let is_cursor = line_idx == app.select_cursor;
-
-        let line_num = format!("{:>4} ", line_idx + 1);
-
-        let mut spans = Vec::new();
-
-        if is_cursor {
-            // Highlighted cursor line
-            spans.push(Span::styled(
-                line_num,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-            // Show the full line with a highlight marker
-            let line_style = Style::default().bg(Color::DarkGray).fg(Color::White);
-            spans.push(Span::styled(source_line.raw.clone(), line_style));
-        } else {
-            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
-
-            // Render tokens with syntax highlighting
-            let is_comment = matches!(source_line.line_type, LineType::Comment | LineType::Empty);
-            if is_comment {
-                let style = Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC | Modifier::DIM);
-                spans.push(Span::styled(source_line.raw.clone(), style));
-            } else {
-                // Show with original styles
-                for token in &source_line.tokens {
-                    spans.push(Span::styled(token.text.clone(), token.style));
-                }
-            }
-        }
-
-        lines.push(Line::from(spans));
-    }
-
-    let text = Text::from(lines);
-    let paragraph = Paragraph::new(text).block(Block::default().borders(Borders::NONE));
-    frame.render_widget(paragraph, area);
-}
-
-fn render_select_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let line_info = format!(
-        "  Line {}/{}  |  [{}]  |  j/k: move  Enter: start  g/G: top/bottom  Ctrl+C: quit",
-        app.select_cursor + 1,
-        app.source_lines.len(),
-        app.syntax_name,
-    );
-
-    let status =
-        Paragraph::new(line_info).style(Style::default().fg(Color::Black).bg(Color::Yellow));
-
-    frame.render_widget(status, area);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {

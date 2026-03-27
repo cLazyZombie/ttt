@@ -10,12 +10,18 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("ttt: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     let mut file_path: Option<String> = None;
     let mut start_line: usize = 1;
-    let mut cursor_mode = false;
     let mut ext_override: Option<String> = None;
     let mut diff_mode = false;
     let mut source_only = false;
@@ -24,6 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--help" | "-h" => {
+                print_help();
+                std::process::exit(0);
+            }
             "--diff" | "-d" => {
                 diff_mode = true;
             }
@@ -46,9 +56,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Error: invalid line number '{}'", args[i]);
                     std::process::exit(1);
                 });
-            }
-            "--cursor" | "-c" => {
-                cursor_mode = true;
             }
             "--ext" | "-e" => {
                 i += 1;
@@ -79,8 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     } else {
-        eprintln!("Usage: ttt [--line <N>] [--cursor] [--diff] [--ext <EXT>] [<source-file> | -]");
-        eprintln!("       command | ttt [--diff] [--ext <EXT>] [--line <N>] [--cursor]");
+        eprintln!("Usage: ttt [OPTIONS] <file>");
+        eprintln!("       command | ttt [OPTIONS]");
+        eprintln!("\nRun 'ttt --help' for more information.");
         std::process::exit(1);
     };
 
@@ -105,14 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let mut app = app::App::new(
-        source_lines,
-        syntax_name,
-        start_line,
-        cursor_mode,
-        quiet,
-        wpm_mode,
-    );
+    let mut app = app::App::new(source_lines, syntax_name, start_line, quiet, wpm_mode);
 
     let mut terminal = ratatui::init();
 
@@ -159,6 +160,45 @@ fn extract_diff_additions(input: &str, source_only: bool) -> (String, Option<Str
     (lines.join("\n"), first_ext)
 }
 
+fn print_help() {
+    println!(
+        "\
+ttt - typing practice with syntax-highlighted source code
+
+USAGE:
+    ttt [OPTIONS] <file>
+    ttt [OPTIONS] -
+    command | ttt [OPTIONS]
+
+ARGS:
+    <file>                Source file to practice typing
+    -                     Read from stdin explicitly
+
+OPTIONS:
+    -h, --help            Show this help message and exit
+    -l, --line <N>        Start at line N (default: 1)
+    -e, --ext <EXT>       Override syntax highlighting extension (e.g., rs, py, js)
+    -d, --diff            Extract added lines from unified diff input
+    -s, --src             With --diff, include only source code files
+    -q, --quiet           Hide per-line speed display
+        --wpm             Show speed as WPM instead of KPM
+
+KEYBINDINGS:
+    Enter                 Confirm current line and advance
+    Backspace             Delete last typed character
+    Ctrl+W                Delete last word
+    Ctrl+R                Restart current line
+    Ctrl+C, Ctrl+Q        Quit
+
+EXAMPLES:
+    ttt main.rs
+    ttt --line 50 main.rs
+    cat file.py | ttt -e py
+    git diff HEAD~1 | ttt --diff
+    git log -p | ttt --diff --src"
+    );
+}
+
 fn run_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut app::App,
@@ -177,36 +217,17 @@ fn run_loop(
                 break;
             }
 
-            if app.mode == app::Mode::Selecting {
-                match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => app.select_move(-1),
-                    KeyCode::Down | KeyCode::Char('j') => app.select_move(1),
-                    KeyCode::Left | KeyCode::Char('h') => app.select_move(-1),
-                    KeyCode::Right | KeyCode::Char('l') => app.select_move(1),
-                    KeyCode::Enter => app.confirm_selection(),
-                    KeyCode::Home | KeyCode::Char('g') => {
-                        app.select_cursor = 0;
-                    }
-                    KeyCode::End | KeyCode::Char('G') => {
-                        if !app.source_lines.is_empty() {
-                            app.select_cursor = app.source_lines.len() - 1;
-                        }
-                    }
-                    _ => {}
+            match (key.modifiers, key.code) {
+                (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                    app.backspace_word();
                 }
-            } else {
-                match (key.modifiers, key.code) {
-                    (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
-                        app.backspace_word();
-                    }
-                    (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                        app.restart_line();
-                    }
-                    (_, KeyCode::Enter) => app.confirm_line(),
-                    (_, KeyCode::Char(c)) => app.type_char(c),
-                    (_, KeyCode::Backspace) => app.backspace(),
-                    _ => {}
+                (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+                    app.restart_line();
                 }
+                (_, KeyCode::Enter) => app.confirm_line(),
+                (_, KeyCode::Char(c)) => app.type_char(c),
+                (_, KeyCode::Backspace) => app.backspace(),
+                _ => {}
             }
         }
     }

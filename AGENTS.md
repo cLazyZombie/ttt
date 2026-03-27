@@ -10,9 +10,9 @@
 
 ```bash
 cargo build
+cargo run -- -h                        # 도움말 표시
 cargo run -- <소스파일>
 cargo run -- --line 50 <소스파일>    # 50번째 줄부터 시작
-cargo run -- --cursor <소스파일>     # 대화형 줄 선택
 cat file.rs | cargo run -- -e rs        # 파이프로 stdin 입력 (확장자 지정)
 git log -p | cargo run -- -e diff       # 임의의 명령 출력을 파이프로 전달
 cargo run -- -e py -                    # `-`로 명시적 stdin 읽기
@@ -57,9 +57,9 @@ cargo llvm-cov --html            # HTML 리포트 (target/llvm-cov/html/)
 
 ## 아키텍처
 
-- `src/main.rs` — CLI 진입점 (`--line`, `--cursor`, `--ext`, `--diff`, `--quiet`, `--wpm`, stdin), 터미널 생명주기, 이벤트 루프
+- `src/main.rs` — CLI 진입점 (`--help`, `--line`, `--ext`, `--diff`, `--quiet`, `--wpm`, stdin), 에러 처리(`main`→`run` 분리), 터미널 생명주기, 이벤트 루프
 - `src/parser.rs` — syntect 파싱, 주석 감지, `SourceLine` 생성
-- `src/app.rs` — App 상태, 타이핑 로직, 줄 진행, 커서 선택 모드, 단어 삭제
-- `src/ui.rs` — ratatui 렌더링 (인라인 오버레이, 선택 모드, 상태 바, 결과 화면)
+- `src/app.rs` — App 상태, 타이핑 로직, 줄 진행, 단어 삭제
+- `src/ui.rs` — ratatui 렌더링 (인라인 오버레이, 상태 바, 결과 화면)
 - `src/stats.rs` — KPM 및 정확도 계산
 - `themes/github-dark.tmTheme` — 내장 GitHub Dark 테마 (`include_bytes!`로 로드)

@@ -8,12 +8,6 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Mode {
-    Selecting,
-    Typing,
-}
-
 pub struct App {
     pub source_lines: Vec<SourceLine>,
     pub current_line: usize,
@@ -23,8 +17,6 @@ pub struct App {
     pub scroll_offset: usize,
     pub finished: bool,
     pub syntax_name: String,
-    pub mode: Mode,
-    pub select_cursor: usize,
     pub line_stats: Vec<Option<LineStats>>,
     line_start: Option<Instant>,
     line_keystrokes: usize,
@@ -39,7 +31,6 @@ impl App {
         source_lines: Vec<SourceLine>,
         syntax_name: String,
         start_line: usize,
-        cursor_mode: bool,
         quiet: bool,
         wpm_mode: bool,
     ) -> Self {
@@ -61,12 +52,6 @@ impl App {
             scroll_offset: 0,
             finished: false,
             syntax_name,
-            mode: if cursor_mode {
-                Mode::Selecting
-            } else {
-                Mode::Typing
-            },
-            select_cursor: start_idx,
             line_stats: vec![None; line_count],
             line_start: None,
             line_keystrokes: 0,
@@ -76,54 +61,16 @@ impl App {
             wpm_mode,
         };
 
-        if cursor_mode {
-            // In selecting mode, just clamp cursor to valid range
-            if !app.source_lines.is_empty() {
-                app.select_cursor = start_idx.min(app.source_lines.len() - 1);
-            }
-        } else {
-            if start_idx >= app.source_lines.len() {
+        if start_idx >= app.source_lines.len() {
+            app.finished = true;
+        } else if !app.is_typeable_line(app.current_line) {
+            app.advance_to_next_typeable_line();
+            if app.current_line >= app.source_lines.len() {
                 app.finished = true;
-            } else if !app.is_typeable_line(app.current_line) {
-                app.advance_to_next_typeable_line();
-                if app.current_line >= app.source_lines.len() {
-                    app.finished = true;
-                }
             }
         }
 
         app
-    }
-
-    pub fn select_move(&mut self, delta: isize) {
-        if self.source_lines.is_empty() {
-            return;
-        }
-        let max = self.source_lines.len() - 1;
-        if delta < 0 {
-            self.select_cursor = self.select_cursor.saturating_sub(delta.unsigned_abs());
-        } else {
-            self.select_cursor = (self.select_cursor + delta as usize).min(max);
-        }
-    }
-
-    pub fn confirm_selection(&mut self) {
-        if self.source_lines.is_empty() {
-            self.finished = true;
-            self.mode = Mode::Typing;
-            return;
-        }
-
-        self.current_line = self.select_cursor;
-        self.current_col = 0;
-        self.mode = Mode::Typing;
-
-        if !self.is_typeable_line(self.current_line) {
-            self.advance_to_next_typeable_line();
-        }
-        if self.current_line >= self.source_lines.len() {
-            self.finished = true;
-        }
     }
 
     fn is_typeable_line(&self, line_idx: usize) -> bool {
@@ -304,14 +251,6 @@ impl App {
         self.scroll_offset = target;
     }
 
-    pub fn update_scroll_for_select(&mut self, visible_height: usize) {
-        if visible_height == 0 {
-            return;
-        }
-        let target = self.select_cursor.saturating_sub(visible_height / 3);
-        self.scroll_offset = target;
-    }
-
     pub fn total_typeable_lines(&self) -> usize {
         self.source_lines
             .iter()
@@ -391,7 +330,7 @@ mod tests {
     #[test]
     fn new_app_starts_at_first_code_line() {
         let lines = vec![make_code_line("hello"), make_code_line("world")];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.current_line, 0);
         assert_eq!(app.current_col, 0);
         assert!(!app.finished);
@@ -404,7 +343,7 @@ mod tests {
             make_empty_line(),
             make_code_line("code"),
         ];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.current_line, 2);
         assert!(!app.finished);
     }
@@ -416,14 +355,14 @@ mod tests {
             make_comment_line("// b"),
             make_empty_line(),
         ];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert!(app.finished);
     }
 
     #[test]
     fn type_char_correct() {
         let lines = vec![make_code_line("ab")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         assert_eq!(app.current_col, 1);
         assert_eq!(app.typed_chars[0][0], Some('a'));
@@ -434,7 +373,7 @@ mod tests {
     #[test]
     fn type_char_incorrect() {
         let lines = vec![make_code_line("ab")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('x'); // wrong char
         assert_eq!(app.typed_chars[0][0], Some('x'));
         assert_eq!(app.stats.total_keystrokes, 1);
@@ -444,7 +383,7 @@ mod tests {
     #[test]
     fn type_char_advances_line_on_enter() {
         let lines = vec![make_code_line("a"), make_code_line("b")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         assert_eq!(app.current_line, 0); // not yet advanced
         app.confirm_line();
@@ -455,7 +394,7 @@ mod tests {
     #[test]
     fn type_char_finishes_on_last_line() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         assert!(!app.finished); // not finished until Enter
         app.confirm_line();
@@ -470,7 +409,7 @@ mod tests {
             make_empty_line(),
             make_code_line("b"),
         ];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line();
         assert_eq!(app.current_line, 3); // skipped lines 1 and 2
@@ -480,7 +419,7 @@ mod tests {
     #[test]
     fn type_char_when_finished_is_noop() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line();
         assert!(app.finished);
@@ -491,7 +430,7 @@ mod tests {
     #[test]
     fn backspace_removes_last_char() {
         let lines = vec![make_code_line("ab")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         assert_eq!(app.current_col, 1);
         app.backspace();
@@ -502,7 +441,7 @@ mod tests {
     #[test]
     fn backspace_at_start_is_noop() {
         let lines = vec![make_code_line("ab")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.backspace(); // at col 0, should be no-op
         assert_eq!(app.current_col, 0);
     }
@@ -510,7 +449,7 @@ mod tests {
     #[test]
     fn backspace_when_finished_is_noop() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line();
         assert!(app.finished);
@@ -526,14 +465,14 @@ mod tests {
             make_empty_line(),
             make_mixed_line("c;", " // d"),
         ];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.total_typeable_lines(), 2);
     }
 
     #[test]
     fn mixed_line_is_typeable() {
         let lines = vec![make_mixed_line("x = 1;", " // init")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         assert!(!app.finished);
         for c in "x = 1;".chars() {
             app.type_char(c);
@@ -548,7 +487,7 @@ mod tests {
         for i in 0..50 {
             lines.push(make_code_line(&format!("line {i}")));
         }
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         // Type through first 30 lines
         for _ in 0..30 {
             let line = &app.source_lines[app.current_line].typeable_content.clone();
@@ -566,7 +505,7 @@ mod tests {
     #[test]
     fn update_scroll_zero_height_noop() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.update_scroll(0);
         assert_eq!(app.scroll_offset, 0);
     }
@@ -578,7 +517,7 @@ mod tests {
             make_comment_line("// x"),
             make_code_line("de"),
         ];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.typed_chars[0].len(), 3);
         assert_eq!(app.typed_chars[1].len(), 0); // comment has no typeable
         assert_eq!(app.typed_chars[2].len(), 2);
@@ -587,7 +526,7 @@ mod tests {
     #[test]
     fn typo_blocks_line_advance() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('x'); // wrong char for 'b'
         // Still on line 0 because there's a typo
@@ -598,7 +537,7 @@ mod tests {
     #[test]
     fn fix_typo_then_advance() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('x'); // wrong
         app.confirm_line(); // should NOT advance (typo)
@@ -612,7 +551,7 @@ mod tests {
     #[test]
     fn all_correct_advances_on_enter() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('b');
         assert_eq!(app.current_line, 0); // not advanced yet
@@ -623,7 +562,7 @@ mod tests {
     #[test]
     fn typo_at_start_blocks_advance() {
         let lines = vec![make_code_line("a"), make_code_line("b")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('x'); // wrong
         app.confirm_line(); // should NOT advance
         assert_eq!(app.current_line, 0);
@@ -637,7 +576,7 @@ mod tests {
     #[test]
     fn multiple_typos_must_all_be_fixed() {
         let lines = vec![make_code_line("abc")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('x');
         app.type_char('y');
         app.type_char('c');
@@ -657,7 +596,7 @@ mod tests {
     #[test]
     fn confirm_line_mid_line_is_noop() {
         let lines = vec![make_code_line("abc"), make_code_line("def")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line(); // only 1 of 3 chars typed
         assert_eq!(app.current_line, 0); // stays
@@ -666,7 +605,7 @@ mod tests {
     #[test]
     fn confirm_line_with_typo_is_noop() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('x'); // wrong
         app.confirm_line();
@@ -675,14 +614,14 @@ mod tests {
 
     #[test]
     fn new_app_empty_source_is_finished() {
-        let app = App::new(Vec::new(), "Test".into(), 1, false, false, false);
+        let app = App::new(Vec::new(), "Test".into(), 1, false, false);
         assert!(app.finished);
     }
 
     #[test]
     fn type_char_at_line_end_with_errors_is_noop() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('x'); // wrong — stuck at end of line
         assert_eq!(app.current_col, 2);
@@ -699,7 +638,7 @@ mod tests {
             make_code_line("bbb"),
             make_code_line("ccc"),
         ];
-        let app = App::new(lines, "Test".into(), 2, false, false, false); // start at line 2
+        let app = App::new(lines, "Test".into(), 2, false, false); // start at line 2
         assert_eq!(app.current_line, 1); // 0-based index for line 2
     }
 
@@ -710,28 +649,28 @@ mod tests {
             make_comment_line("// skip"),
             make_code_line("ccc"),
         ];
-        let app = App::new(lines, "Test".into(), 2, false, false, false); // line 2 is a comment
+        let app = App::new(lines, "Test".into(), 2, false, false); // line 2 is a comment
         assert_eq!(app.current_line, 2); // jumped to line 3
     }
 
     #[test]
     fn start_line_beyond_end_is_finished() {
         let lines = vec![make_code_line("aaa")];
-        let app = App::new(lines, "Test".into(), 99, false, false, false);
+        let app = App::new(lines, "Test".into(), 99, false, false);
         assert!(app.finished);
     }
 
     #[test]
     fn start_line_one_is_default() {
         let lines = vec![make_code_line("aaa"), make_code_line("bbb")];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.current_line, 0);
     }
 
     #[test]
     fn start_line_zero_treated_as_one() {
         let lines = vec![make_code_line("aaa"), make_code_line("bbb")];
-        let app = App::new(lines, "Test".into(), 0, false, false, false);
+        let app = App::new(lines, "Test".into(), 0, false, false);
         assert_eq!(app.current_line, 0);
     }
 
@@ -742,89 +681,13 @@ mod tests {
             make_code_line("bbb"),
             make_code_line("ccc"),
         ];
-        let mut app = App::new(lines, "Test".into(), 3, false, false, false); // start at last line
+        let mut app = App::new(lines, "Test".into(), 3, false, false); // start at last line
         assert_eq!(app.current_line, 2);
         for c in "ccc".chars() {
             app.type_char(c);
         }
         app.confirm_line();
         assert!(app.finished);
-    }
-
-    #[test]
-    fn cursor_mode_starts_in_selecting() {
-        let lines = vec![make_code_line("aaa"), make_code_line("bbb")];
-        let app = App::new(lines, "Test".into(), 1, true, false, false);
-        assert_eq!(app.mode, Mode::Selecting);
-        assert_eq!(app.select_cursor, 0);
-    }
-
-    #[test]
-    fn select_move_down_and_up() {
-        let lines = vec![
-            make_code_line("a"),
-            make_code_line("b"),
-            make_code_line("c"),
-        ];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        assert_eq!(app.select_cursor, 0);
-        app.select_move(1);
-        assert_eq!(app.select_cursor, 1);
-        app.select_move(1);
-        assert_eq!(app.select_cursor, 2);
-        app.select_move(1); // at end, stays
-        assert_eq!(app.select_cursor, 2);
-        app.select_move(-1);
-        assert_eq!(app.select_cursor, 1);
-        app.select_move(-1);
-        assert_eq!(app.select_cursor, 0);
-        app.select_move(-1); // at start, stays
-        assert_eq!(app.select_cursor, 0);
-    }
-
-    #[test]
-    fn confirm_selection_enters_typing() {
-        let lines = vec![
-            make_code_line("a"),
-            make_code_line("b"),
-            make_code_line("c"),
-        ];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.select_move(1); // cursor on line 2
-        app.confirm_selection();
-        assert_eq!(app.mode, Mode::Typing);
-        assert_eq!(app.current_line, 1);
-    }
-
-    #[test]
-    fn confirm_selection_skips_comment() {
-        let lines = vec![
-            make_code_line("a"),
-            make_comment_line("// b"),
-            make_code_line("c"),
-        ];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.select_move(1); // cursor on comment line 2
-        app.confirm_selection();
-        assert_eq!(app.mode, Mode::Typing);
-        assert_eq!(app.current_line, 2); // skipped to line 3
-    }
-
-    #[test]
-    fn confirm_selection_at_end_finishes() {
-        let lines = vec![make_code_line("a"), make_comment_line("// b")];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.select_move(1); // cursor on last line (comment)
-        app.confirm_selection();
-        assert!(app.finished);
-    }
-
-    #[test]
-    fn select_move_on_empty_is_noop() {
-        let mut app = App::new(Vec::new(), "Test".into(), 1, true, false, false);
-        app.select_move(1);
-        app.select_move(-1);
-        assert_eq!(app.select_cursor, 0);
     }
 
     // --- backspace_word tests ---
@@ -840,7 +703,7 @@ mod tests {
     /// Prevents auto-finish when the first line is fully typed.
     fn make_word_app(content: &str) -> App {
         let lines = vec![make_code_line(content), make_code_line("end")];
-        App::new(lines, "Test".into(), 1, false, false, false)
+        App::new(lines, "Test".into(), 1, false, false)
     }
 
     #[test]
@@ -903,7 +766,7 @@ mod tests {
     #[test]
     fn backspace_word_when_finished_is_noop() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         type_str(&mut app, "a");
         app.confirm_line();
         assert!(app.finished);
@@ -1052,30 +915,7 @@ mod tests {
             make_comment_line("// b"),
             make_comment_line("// c"),
         ];
-        let app = App::new(lines, "Test".into(), 2, false, false, false);
-        assert!(app.finished);
-    }
-
-    #[test]
-    fn confirm_selection_empty_source() {
-        // cursor_mode + empty source → confirm_selection → finished (covers lines 89-91)
-        let mut app = App::new(Vec::new(), "Test".into(), 1, true, false, false);
-        app.confirm_selection();
-        assert!(app.finished);
-        assert_eq!(app.mode, Mode::Typing);
-    }
-
-    #[test]
-    fn confirm_selection_no_typeable_after_cursor() {
-        // All lines after cursor are comments → finished (covers line 102)
-        let lines = vec![
-            make_code_line("a"),
-            make_comment_line("// b"),
-            make_empty_line(),
-        ];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.select_move(1); // cursor on comment line
-        app.confirm_selection();
+        let app = App::new(lines, "Test".into(), 2, false, false);
         assert!(app.finished);
     }
 
@@ -1083,7 +923,7 @@ mod tests {
     fn confirm_line_when_finished_is_noop() {
         // covers line 142
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line();
         assert!(app.finished);
@@ -1092,31 +932,9 @@ mod tests {
     }
 
     #[test]
-    fn update_scroll_for_select_basic() {
-        // covers lines 236-242
-        let mut lines = Vec::new();
-        for i in 0..50 {
-            lines.push(make_code_line(&format!("line {i}")));
-        }
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.select_cursor = 30;
-        app.update_scroll_for_select(20);
-        assert!(app.scroll_offset <= 30);
-        assert!(30 - app.scroll_offset < 20);
-    }
-
-    #[test]
-    fn update_scroll_for_select_zero_height() {
-        let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, true, false, false);
-        app.update_scroll_for_select(0);
-        assert_eq!(app.scroll_offset, 0);
-    }
-
-    #[test]
     fn confirm_line_records_line_stats() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('b');
         app.confirm_line();
@@ -1132,7 +950,7 @@ mod tests {
     #[test]
     fn avg_line_kpm_no_completed() {
         let lines = vec![make_code_line("a")];
-        let app = App::new(lines, "Test".into(), 1, false, false, false);
+        let app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.avg_line_speed(), 0.0);
     }
 
@@ -1143,7 +961,7 @@ mod tests {
             make_code_line("cd"),
             make_code_line("ef"),
         ];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         // Complete first line
         app.type_char('a');
         app.type_char('b');
@@ -1159,7 +977,7 @@ mod tests {
     #[test]
     fn enter_skips_untyped_line() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.current_line, 0);
         // Enter without typing → skip to next line
         app.confirm_line();
@@ -1170,7 +988,7 @@ mod tests {
     #[test]
     fn enter_does_not_skip_partially_typed_line() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line(); // incomplete → should not skip
         assert_eq!(app.current_line, 0);
@@ -1179,7 +997,7 @@ mod tests {
     #[test]
     fn restart_line_resets_typed_chars() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.type_char('x');
         app.restart_line();
@@ -1190,7 +1008,7 @@ mod tests {
     #[test]
     fn restart_line_restores_stats() {
         let lines = vec![make_code_line("ab"), make_code_line("cd")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         assert_eq!(app.stats.total_keystrokes, 0);
         app.type_char('a');
         app.type_char('x');
@@ -1203,7 +1021,7 @@ mod tests {
     #[test]
     fn restart_line_when_finished_is_noop() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.type_char('a');
         app.confirm_line();
         assert!(app.finished);
@@ -1214,7 +1032,7 @@ mod tests {
     #[test]
     fn enter_skip_on_last_line_finishes() {
         let lines = vec![make_code_line("a")];
-        let mut app = App::new(lines, "Test".into(), 1, false, false, false);
+        let mut app = App::new(lines, "Test".into(), 1, false, false);
         app.confirm_line(); // skip only line
         assert!(app.finished);
     }
