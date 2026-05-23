@@ -10,13 +10,16 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
+// LCOV_EXCL_START: process exit behavior is covered by manual CLI runs.
 fn main() {
     if let Err(e) = run() {
         eprintln!("ttt: {e}");
         std::process::exit(1);
     }
 }
+// LCOV_EXCL_STOP
 
+// LCOV_EXCL_START: env/stdin parsing and terminal lifecycle are integration boundaries.
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
@@ -123,6 +126,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     result
 }
+// LCOV_EXCL_STOP
 
 const SOURCE_EXTENSIONS: &[&str] = &[
     "c", "h", "cpp", "cc", "cxx", "hpp", "hxx", "cs", "rs", "go", "java", "kt", "kts", "scala",
@@ -160,6 +164,69 @@ fn extract_diff_additions(input: &str, source_only: bool) -> (String, Option<Str
     (lines.join("\n"), first_ext)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_source_ext_is_case_insensitive() {
+        assert!(is_source_ext("rs"));
+        assert!(is_source_ext("PY"));
+        assert!(!is_source_ext("md"));
+    }
+
+    #[test]
+    fn extract_diff_additions_collects_added_lines_and_first_extension() {
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
++++ b/src/lib.rs
++fn main() {}
++let x = 1;
+diff --git a/README.md b/README.md
++++ b/README.md
++# title";
+
+        let (added, ext) = extract_diff_additions(diff, false);
+
+        assert_eq!(added, "fn main() {}\nlet x = 1;\n# title");
+        assert_eq!(ext.as_deref(), Some("rs"));
+    }
+
+    #[test]
+    fn extract_diff_additions_source_only_skips_non_source_files() {
+        let diff = "\
+diff --git a/README.md b/README.md
++++ b/README.md
++# title
+diff --git a/src/lib.rs b/src/lib.rs
++++ b/src/lib.rs
++pub fn answer() -> i32 { 42 }";
+
+        let (added, ext) = extract_diff_additions(diff, true);
+
+        assert_eq!(added, "pub fn answer() -> i32 { 42 }");
+        assert_eq!(ext.as_deref(), Some("rs"));
+    }
+
+    #[test]
+    fn extract_diff_additions_without_extension_respects_source_only() {
+        let diff = "\
+diff --git a/Makefile b/Makefile
++++ b/Makefile
++build:
++\tcargo build";
+
+        let (all_added, all_ext) = extract_diff_additions(diff, false);
+        assert_eq!(all_added, "build:\n\tcargo build");
+        assert_eq!(all_ext, None);
+
+        let (source_added, source_ext) = extract_diff_additions(diff, true);
+        assert!(source_added.is_empty());
+        assert_eq!(source_ext, None);
+    }
+}
+
+// LCOV_EXCL_START: stdout help text is exercised through the CLI.
 fn print_help() {
     println!(
         "\
@@ -198,7 +265,9 @@ EXAMPLES:
     git log -p | ttt --diff --src"
     );
 }
+// LCOV_EXCL_STOP
 
+// LCOV_EXCL_START: ratatui draw and crossterm polling require a live terminal.
 fn run_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut app::App,
@@ -233,3 +302,4 @@ fn run_loop(
     }
     Ok(())
 }
+// LCOV_EXCL_STOP

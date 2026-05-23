@@ -65,9 +65,6 @@ impl App {
             app.finished = true;
         } else if !app.is_typeable_line(app.current_line) {
             app.advance_to_next_typeable_line();
-            if app.current_line >= app.source_lines.len() {
-                app.finished = true;
-            }
         }
 
         app
@@ -616,6 +613,13 @@ mod tests {
     fn new_app_empty_source_is_finished() {
         let app = App::new(Vec::new(), "Test".into(), 1, false, false);
         assert!(app.finished);
+    }
+
+    #[test]
+    fn is_typeable_line_out_of_range_is_false() {
+        let lines = vec![make_code_line("a")];
+        let app = App::new(lines, "Test".into(), 1, false, false);
+        assert!(!app.is_typeable_line(1));
     }
 
     #[test]

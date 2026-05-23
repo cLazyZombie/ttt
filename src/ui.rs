@@ -1,3 +1,4 @@
+// LCOV_EXCL_START: ratatui Frame rendering is exercised through the live TUI.
 use crate::app::App;
 use crate::parser::{LineType, SourceLine};
 use ratatui::Frame;
@@ -233,3 +234,4 @@ fn render_results(frame: &mut Frame, app: &App) {
 
     frame.render_widget(paragraph, horizontal[1]);
 }
+// LCOV_EXCL_STOP

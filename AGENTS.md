@@ -47,17 +47,23 @@ cargo test
 ## 커버리지
 
 - 커버리지 계측 시 항상 아래 기준값과 현재 결과를 비교하여 차이를 보여줄 것.
+- 최종 커버리지 판정은 `lcov_filter` 적용 후 `100% coverage`를 기준으로 할 것.
+- `lcov_filter`가 없으면 `cargo install --git https://github.com/cLazyZombie/lcov_filter --force`로 설치할 것.
 
 ```bash
 cargo llvm-cov --summary-only   # 파일별 요약
 cargo llvm-cov --text            # 줄별 상세
 cargo llvm-cov --html            # HTML 리포트 (target/llvm-cov/html/)
+cargo llvm-cov --lcov --quiet | lcov_filter --text
 ```
 
 - `stats.rs` — 100%
 - `app.rs` — ~99.7%
 - `parser.rs` — ~97.6%
 - `main.rs`, `ui.rs` — 단위 테스트 불가 (터미널/Frame 의존)
+- 제외는 테스트 가치가 낮거나 외부 의존성이 필수인 코드에만 적용할 것.
+- 라인 제외는 `// LCOV_EXCL_LINE`, 범위 제외는 `// LCOV_EXCL_START` ~ `// LCOV_EXCL_STOP`을 사용할 것.
+- `main.rs`, `ui.rs`처럼 터미널 생명주기나 ratatui `Frame`에 직접 의존하는 영역은 범위 제외 대상이지만, `app.rs`, `parser.rs`, `stats.rs`의 로직은 우선 테스트로 채울 것.
 
 ## 아키텍처
 
